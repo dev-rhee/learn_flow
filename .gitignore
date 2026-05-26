@@ -1,0 +1,29 @@
+# 환경 변수 (절대 커밋 금지)
+.env
+.env.local
+.env.prod
+
+# SSL 인증서
+docker/ssl/
+
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 로그
+*.log
+logs/
+
+**/rebel.xml
+
+.claude/

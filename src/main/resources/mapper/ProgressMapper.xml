@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.learnflow.domain.progress.ProgressMapper">
+
+    <resultMap id="ProgressResultMap" type="com.learnflow.domain.progress.Progress">
+        <id     property="id"            column="id"/>
+        <result property="tenantId"      column="tenant_id"/>
+        <result property="enrollmentId"  column="enrollment_id"/>
+        <result property="lessonId"      column="lesson_id"/>
+        <result property="lessonTitle"   column="lesson_title"/>
+        <result property="watchedSec"    column="watched_sec"/>
+        <result property="completed"     column="completed"/>
+        <result property="lastWatchedAt" column="last_watched_at"/>
+    </resultMap>
+
+    <resultMap id="SummaryResultMap" type="com.learnflow.domain.progress.ProgressSummary">
+        <id     property="id"               column="id"/>
+        <result property="tenantId"         column="tenant_id"/>
+        <result property="enrollmentId"     column="enrollment_id"/>
+        <result property="studentName"      column="student_name"/>
+        <result property="courseTitle"      column="course_title"/>
+        <result property="totalLessons"     column="total_lessons"/>
+        <result property="completedLessons" column="completed_lessons"/>
+        <result property="completionRate"   column="completion_rate"/>
+        <result property="lastUpdatedAt"    column="last_updated_at"/>
+    </resultMap>
+
+    <select id="findByEnrollmentId" resultMap="ProgressResultMap">
+        SELECT
+            p.id,
+            p.tenant_id,
+            p.enrollment_id,
+            p.lesson_id,
+            l.title AS lesson_title,
+            p.watched_sec,
+            p.completed,
+            p.last_watched_at
+        FROM progress p
+        JOIN lesson l ON p.lesson_id = l.id
+        WHERE p.enrollment_id = #{enrollmentId}
+        ORDER BY l.sort_order
+    </select>
+
+    <select id="findByEnrollmentAndLesson" resultMap="ProgressResultMap">
+        SELECT id, tenant_id, enrollment_id, lesson_id, watched_sec, completed, last_watched_at
+        FROM progress
+        WHERE enrollment_id = #{enrollmentId} AND lesson_id = #{lessonId}
+    </select>
+
+    <!-- UPSERT: 진도 저장 (없으면 INSERT, 있으면 UPDATE) -->
+    <insert id="upsertProgress">
+        INSERT INTO progress (tenant_id, enrollment_id, lesson_id, watched_sec, completed, last_watched_at)
+        VALUES (#{tenantId}, #{enrollmentId}, #{lessonId}, #{watchedSec}, #{completed}, NOW())
+        ON CONFLICT (tenant_id, enrollment_id, lesson_id)
+        DO UPDATE SET
+            watched_sec    = GREATEST(progress.watched_sec, EXCLUDED.watched_sec),
+            completed      = EXCLUDED.completed OR progress.completed,
+            last_watched_at = NOW()
+    </insert>
+
+    <!-- 요약 테이블 조회 (0.3초 응답 목표 — 배치 집계 데이터) -->
+    <select id="findSummaryByEnrollmentId" resultMap="SummaryResultMap">
+        SELECT
+            ps.id,
+            ps.tenant_id,
+            ps.enrollment_id,
+            u.name  AS student_name,
+            c.title AS course_title,
+            ps.total_lessons,
+            ps.completed_lessons,
+            ps.completion_rate,
+            ps.last_updated_at
+        FROM progress_summary ps
+        JOIN enrollment e ON ps.enrollment_id = e.id
+        JOIN users      u ON e.user_id         = u.id
+        JOIN course     c ON e.course_id        = c.id
+        WHERE ps.enrollment_id = #{enrollmentId}
+    </select>
+
+    <select id="findSummaryByCourseId" resultMap="SummaryResultMap">
+        SELECT
+            ps.id,
+            ps.tenant_id,
+            ps.enrollment_id,
+            u.name  AS student_name,
+            c.title AS course_title,
+            ps.total_lessons,
+            ps.completed_lessons,
+            ps.completion_rate,
+            ps.last_updated_at
+        FROM progress_summary ps
+        JOIN enrollment e ON ps.enrollment_id = e.id
+        JOIN users      u ON e.user_id         = u.id
+        JOIN course     c ON e.course_id        = c.id
+        WHERE e.course_id = #{courseId}
+        ORDER BY ps.completion_rate DESC
+    </select>
+
+    <!-- 배치: 전체 재집계 (매일 새벽 2시) -->
+    <insert id="rebuildSummaryAll">
+        INSERT INTO progress_summary (tenant_id, enrollment_id, total_lessons, completed_lessons, completion_rate, last_updated_at)
+        SELECT
+            e.tenant_id,
+            e.id                                                           AS enrollment_id,
+            COUNT(l.id)                                                    AS total_lessons,
+            COUNT(p.id) FILTER (WHERE p.completed = TRUE)                 AS completed_lessons,
+            ROUND(
+                COUNT(p.id) FILTER (WHERE p.completed = TRUE)::NUMERIC
+                / NULLIF(COUNT(l.id), 0) * 100, 2
+            )                                                              AS completion_rate,
+            NOW()
+        FROM enrollment e
+        JOIN course c  ON e.course_id = c.id
+        JOIN lesson l  ON l.course_id = c.id
+        LEFT JOIN progress p ON p.enrollment_id = e.id AND p.lesson_id = l.id
+        WHERE e.status = 'ACTIVE'
+        GROUP BY e.tenant_id, e.id
+        ON CONFLICT (tenant_id, enrollment_id)
+        DO UPDATE SET
+            total_lessons     = EXCLUDED.total_lessons,
+            completed_lessons = EXCLUDED.completed_lessons,
+            completion_rate   = EXCLUDED.completion_rate,
+            last_updated_at   = NOW()
+    </insert>
+
+    <!-- 배치: 증분 갱신 (최근 1시간 변경분만 — 매 1시간) -->
+    <insert id="upsertSummaryAfter">
+        INSERT INTO progress_summary (tenant_id, enrollment_id, total_lessons, completed_lessons, completion_rate, last_updated_at)
+        SELECT
+            e.tenant_id,
+            e.id,
+            COUNT(l.id),
+            COUNT(p.id) FILTER (WHERE p.completed = TRUE),
+            ROUND(
+                COUNT(p.id) FILTER (WHERE p.completed = TRUE)::NUMERIC
+                / NULLIF(COUNT(l.id), 0) * 100, 2
+            ),
+            NOW()
+        FROM enrollment e
+        JOIN course c  ON e.course_id = c.id
+        JOIN lesson l  ON l.course_id = c.id
+        LEFT JOIN progress p ON p.enrollment_id = e.id AND p.lesson_id = l.id
+        WHERE e.status = 'ACTIVE'
+          AND e.id IN (
+              SELECT DISTINCT enrollment_id FROM progress
+              WHERE last_watched_at >= #{since}
+          )
+        GROUP BY e.tenant_id, e.id
+        ON CONFLICT (tenant_id, enrollment_id)
+        DO UPDATE SET
+            total_lessons     = EXCLUDED.total_lessons,
+            completed_lessons = EXCLUDED.completed_lessons,
+            completion_rate   = EXCLUDED.completion_rate,
+            last_updated_at   = NOW()
+    </insert>
+
+</mapper>

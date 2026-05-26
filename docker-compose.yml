@@ -1,0 +1,73 @@
+services:
+
+  # ── PostgreSQL ──────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: learnflow-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       postgres
+      POSTGRES_USER:     postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - learnflow-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Spring Boot App ─────────────────────────
+  app:
+    image: ${DOCKER_IMAGE:-learnflow-app:latest}
+    container_name: learnflow-app
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL:      jdbc:postgresql://postgres:5432/postgres
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
+      JWT_SECRET:                 ${JWT_SECRET}
+      SPRING_PROFILES_ACTIVE:     default
+      RAG_SERVER_URL:             http://host.docker.internal:8001
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8080:8080"
+    networks:
+      - learnflow-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ── Nginx 리버스 프록시 ─────────────────────
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: learnflow-nginx
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/ssl:/etc/nginx/ssl:ro
+    networks:
+      - learnflow-netg
+
+volumes:
+  postgres_data:
+
+networks:
+  learnflow-net:
+    driver: bridge

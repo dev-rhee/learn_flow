@@ -1,0 +1,29 @@
+spring:
+  datasource:
+    url:      jdbc:postgresql://${DB_HOST:postgres}:5432/learnflow
+    username: learnflow
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 3
+
+  sql:
+    init:
+      mode: never   # 프로덕션에서는 자동 초기화 비활성화
+
+# Actuator 헬스체크만 노출
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+
+logging:
+  level:
+    com.learnflow: INFO
+    org.springframework.security: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"

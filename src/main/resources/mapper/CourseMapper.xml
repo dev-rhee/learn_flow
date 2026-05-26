@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.learnflow.domain.course.CourseMapper">
+
+    <resultMap id="CourseResultMap" type="com.learnflow.domain.course.Course">
+        <id     property="id"                     column="id"/>
+        <result property="tenantId"               column="tenant_id"/>
+        <result property="title"                  column="title"/>
+        <result property="description"            column="description"/>
+        <result property="instructorId"           column="instructor_id"/>
+        <result property="instructorName"         column="instructor_name"/>
+        <result property="status"                 column="status"/>
+        <result property="maxStudents"            column="max_students"/>
+        <result property="completionRateRequired" column="completion_rate_required"/>
+        <result property="createdAt"              column="created_at"/>
+    </resultMap>
+
+    <!--
+        tenant_id 조건을 명시하지 않아도 된다.
+        TenantInterceptor가 실행 전 WHERE tenant_id = ? 를 자동으로 주입한다.
+    -->
+    <select id="findAll" resultMap="CourseResultMap">
+        SELECT
+            c.id,
+            c.tenant_id,
+            c.title,
+            c.description,
+            c.instructor_id,
+            u.name AS instructor_name,
+            c.status,
+            c.max_students,
+            c.completion_rate_required,
+            c.created_at
+        FROM course c
+        JOIN users u ON c.instructor_id = u.id
+        ORDER BY c.created_at DESC
+    </select>
+
+    <select id="findById" resultMap="CourseResultMap">
+        SELECT
+            c.id,
+            c.tenant_id,
+            c.title,
+            c.description,
+            c.instructor_id,
+            u.name AS instructor_name,
+            c.status,
+            c.max_students,
+            c.completion_rate_required,
+            c.created_at
+        FROM course c
+        JOIN users u ON c.instructor_id = u.id
+        WHERE c.id = #{id}
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO course (tenant_id, title, description, instructor_id, status, max_students, completion_rate_required)
+        VALUES (#{tenantId}, #{title}, #{description}, #{instructorId}, #{status}, #{maxStudents}, #{completionRateRequired})
+    </insert>
+
+    <update id="update">
+        UPDATE course
+        SET title                   = #{title},
+            description             = #{description},
+            status                  = #{status},
+            max_students            = #{maxStudents},
+            completion_rate_required = #{completionRateRequired}
+        WHERE id = #{id}
+    </update>
+
+    <delete id="deleteById">
+        DELETE FROM course WHERE id = #{id}
+    </delete>
+
+</mapper>

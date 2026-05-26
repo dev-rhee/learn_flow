@@ -1,0 +1,17 @@
+.git
+.gitignore
+.github
+.gradle
+.idea
+build
+dist
+*.log
+.env
+.env.*
+!.env.example
+README.md
+DEPLOY.md
+docker-compose*.yml
+.DS_Store
+Thumbs.db
+untitled

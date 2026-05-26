@@ -1,0 +1,52 @@
+spring:
+  application:
+    name: learnflow
+
+  datasource:
+    url: jdbc:postgresql://learnflow-db:5432/postgres
+    username: ${DB_USERNAME:learnflow}
+    password: ${DB_PASSWORD:learnflow}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:db/schema.sql
+      data-locations: classpath:db/data.sql
+
+mybatis:
+  mapper-locations: classpath:mapper/**/*.xml
+  type-aliases-package: com.learnflow.domain
+  configuration:
+    map-underscore-to-camel-case: true
+    default-fetch-size: 100
+    default-statement-timeout: 30
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+
+jwt:
+  secret: 'thisislearnflowprojectjwtsecretkeyforencryption32chars'
+  access-expiration: 3600000       # 1시간
+  refresh-expiration: 604800000    # 7일
+
+logging:
+  level:
+    com.learnflow: DEBUG
+    org.springframework.security: DEBUG
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: when-authorized
+
+
+rag:
+  server:
+    url: ${RAG_SERVER_URL:http://localhost:8001}
