@@ -24,6 +24,13 @@ Thumbs.db
 *.log
 logs/
 
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+chroma_db/
+
 **/rebel.xml
 
 .claude/

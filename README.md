@@ -149,6 +149,14 @@ public class ChatRequest {
 ## 프로젝트 구조
 
 ```
+learnflow/
+├── src/                   # Spring Boot 백엔드
+└── rag-server/            # Python FastAPI RAG 서버
+```
+
+### Spring Boot (`src/`)
+
+```
 src/main/java/com/learnflow/
 ├── config/
 │   ├── RagWebClientConfig.java      # WebClient 빈 설정 (RAG 서버 URL)
@@ -171,3 +179,79 @@ src/main/java/com/learnflow/
         ├── JwtProvider.java
         └── JwtAuthenticationFilter.java
 ```
+
+### RAG 서버 (`rag-server/`)
+
+```
+rag-server/
+├── main.py                      # FastAPI 앱 진입점 (포트 8001)
+├── config.py                    # 환경변수 로딩
+├── requirements.txt
+├── routers/
+│   ├── chat_router.py           # POST /chat/stream  — SSE 스트리밍
+│   └── document_router.py      # POST /documents/index-db  — 벡터 인덱싱
+└── services/
+    ├── rag_service.py           # ★ RAG 핵심: 검색 → 프롬프트 조립 → Groq 스트리밍
+    ├── vector_store_service.py  # ChromaDB 벡터 저장/검색
+    ├── embedding_service.py     # 로컬 sentence-transformers 임베딩
+    └── document_service.py      # PDF·DB 데이터 청크 분할 및 인덱싱
+```
+
+---
+
+## 실행 방법
+
+```sql
+-- PostgreSQL 준비
+CREATE DATABASE learnflow;
+CREATE USER learnflow WITH PASSWORD 'learnflow';
+GRANT ALL PRIVILEGES ON DATABASE learnflow TO learnflow;
+```
+
+**Spring Boot**
+
+```bash
+./gradlew bootRun
+```
+
+스키마와 초기 데이터는 자동 적용됩니다. (`src/main/resources/schema.sql`, `data.sql`)
+
+**RAG 서버**
+
+```bash
+cd rag-server
+cp .env.example .env   # GROQ_API_KEY 입력
+pip install -r requirements.txt
+python main.py         # http://localhost:8001
+```
+
+---
+
+## API 요약
+
+### 챗봇 (RAG)
+
+```http
+POST /api/chatbot/stream       # SSE 스트리밍 질의응답
+POST /api/chatbot/index-db     # DB 테이블 벡터 인덱싱 (ADMIN)
+```
+
+### 강좌 / 수강 / 진도
+
+```http
+GET|POST|PUT|DELETE /api/courses
+GET|POST            /api/enrollments
+POST|GET            /api/progress
+GET                 /api/reports/courses/{courseId}/progress
+```
+
+---
+
+## 테스트 계정
+
+| 역할 | 이메일 | 비밀번호 | 테넌트 |
+|---|---|---|---|
+| 관리자 | admin@hanbit.ac.kr | test1234 | univ_a |
+| 교수 | prof.kim@hanbit.ac.kr | test1234 | univ_a |
+| 학생 | student1@hanbit.ac.kr | test1234 | univ_a |
+| 관리자 | admin@mirae.ac.kr | test1234 | univ_b |
