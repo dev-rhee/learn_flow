@@ -145,36 +145,6 @@ public class ChatRequest {
 
 ---
 
-## 멀티 테넌트 데이터 격리
-
-대학 A와 대학 B가 같은 서버를 쓰되 데이터가 섞이지 않아야 하는 시나리오를 구현했습니다.
-
-```
-요청 → JwtAuthenticationFilter
-         └─ TenantContext.setTenantId("univ_a")   // JWT 파싱 시 ThreadLocal에 저장
-              └─ MyBatis SQL 실행 직전
-                   └─ TenantInterceptor 가로채기
-                        └─ WHERE tenant_id = 'univ_a' 자동 주입
-```
-
-- 쿼리에 `tenant_id` 조건을 빠뜨려도 `TenantInterceptor`가 자동으로 주입
-- 요청 종료 시 `TenantContext.clear()`로 ThreadLocal 누수 방지
-
----
-
-## Spring Security RBAC
-
-```
-ROLE_ADMIN      →  course:read/write/delete, user:write, ...
-ROLE_INSTRUCTOR →  course:read/write, enrollment:read, ...
-ROLE_STUDENT    →  course:read, enrollment:read/write, progress:write
-```
-
-- `role_permission` 매핑 테이블로 DB에서 권한 관리
-- `@PreAuthorize`로 서비스 메서드 단위 2차 검증
-- 새 권한 추가 시 DB 매핑만 추가하면 됨
-
----
 
 ## 프로젝트 구조
 
@@ -184,7 +154,7 @@ src/main/java/com/learnflow/
 │   ├── RagWebClientConfig.java      # WebClient 빈 설정 (RAG 서버 URL)
 │   └── SecurityConfig.java
 ├── domain/
-│   ├── chatbot/                     # ★ RAG 챗봇
+│   ├── chatbot/                     # RAG 챗봇
 │   │   ├── ChatbotController.java   # SSE 스트리밍 엔드포인트
 │   │   ├── ChatbotService.java      # WebClient → RAG 서버 연동
 │   │   ├── ChatRequest.java
@@ -192,7 +162,7 @@ src/main/java/com/learnflow/
 │   │   └── DbIndexRequest.java      # DB 벡터 인덱싱 요청
 │   ├── course/
 │   ├── enrollment/
-│   └── progress/                    # 배치 집계 (새벽 2시 전체 / 1시간 증분)
+│   └── progress/                    # 배치 집계
 └── global/
     ├── interceptor/
     │   ├── TenantContext.java        # ThreadLocal 테넌트 홀더
@@ -201,51 +171,3 @@ src/main/java/com/learnflow/
         ├── JwtProvider.java
         └── JwtAuthenticationFilter.java
 ```
-
----
-
-## 실행 방법
-
-```sql
--- PostgreSQL 준비
-CREATE DATABASE learnflow;
-CREATE USER learnflow WITH PASSWORD 'learnflow';
-GRANT ALL PRIVILEGES ON DATABASE learnflow TO learnflow;
-```
-
-```bash
-./gradlew bootRun
-```
-
-스키마와 초기 데이터는 자동 적용됩니다. (`src/main/resources/schema.sql`, `data.sql`)
-
----
-
-## API 요약
-
-### 챗봇 (RAG)
-
-```http
-POST /api/chatbot/stream       # SSE 스트리밍 질의응답
-POST /api/chatbot/index-db     # DB 테이블 벡터 인덱싱 (ADMIN)
-```
-
-### 강좌 / 수강 / 진도
-
-```http
-GET|POST|PUT|DELETE /api/courses
-GET|POST            /api/enrollments
-POST|GET            /api/progress
-GET                 /api/reports/courses/{courseId}/progress
-```
-
----
-
-## 테스트 계정
-
-| 역할 | 이메일 | 비밀번호 | 테넌트 |
-|---|---|---|---|
-| 관리자 | admin@hanbit.ac.kr | test1234 | univ_a |
-| 교수 | prof.kim@hanbit.ac.kr | test1234 | univ_a |
-| 학생 | student1@hanbit.ac.kr | test1234 | univ_a |
-| 관리자 | admin@mirae.ac.kr | test1234 | univ_b |
