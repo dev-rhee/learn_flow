@@ -4,6 +4,65 @@
 
 ---
 
+## 아키텍처
+
+```mermaid
+graph TD
+    Client([클라이언트])
+
+    subgraph Spring Boot
+        direction TB
+        JWT["JwtAuthenticationFilter
+        ── JWT 검증
+        ── TenantContext 설정"]
+
+        subgraph API["API Layer"]
+            CC[ChatbotController]
+            CoC[CourseController]
+            EC[EnrollmentController]
+            PC[ProgressController]
+        end
+
+        subgraph Chatbot["RAG 연동"]
+            CS["ChatbotService
+            WebClient (non-blocking)"]
+        end
+
+        TI["TenantInterceptor
+        MyBatis Plugin
+        ── tenant_id 자동 주입"]
+
+        Batch["ProgressSummaryBatch
+        ── 매일 02:00 전체 재집계
+        ── 매 1시간 증분 갱신"]
+
+        PG[("PostgreSQL")]
+    end
+
+    subgraph RAG["RAG Server (외부)"]
+        Embed["Embedding Model
+        벡터 인덱싱"]
+        VDB[("Vector DB")]
+        LLM["LLM
+        답변 생성"]
+    end
+
+    Client -->|"HTTP 요청"| JWT
+    JWT --> API
+    CC --> CS
+    CS -->|"WebClient POST"| Embed
+    Embed --> VDB
+    VDB --> LLM
+    LLM -->|"SSE 스트리밍"| CS
+    CS -->|"SSE 토큰 스트림"| Client
+
+    API --> TI
+    TI --> PG
+    Batch --> PG
+```
+
+---
+
 ## 왜 만들었나
 
 RAG(Retrieval-Augmented Generation) 구조를 실제 서비스 흐름에 녹여보고 싶었습니다.  
