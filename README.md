@@ -1,6 +1,14 @@
-# LearnFlow — 멀티 테넌트 LMS 백엔드
+# LearnFlow — 학습용 LMS 백엔드
 
-> **포트폴리오 핵심 주제**: 멀티 테넌트 데이터 격리 + Spring Security RBAC 권한 체계
+> RAG 기반 챗봇 + 멀티 테넌트 데이터 격리를 직접 구현해보며 공부한 Spring Boot 백엔드 프로젝트입니다.
+
+---
+
+## 왜 만들었나
+
+RAG(Retrieval-Augmented Generation) 구조를 실제 서비스 흐름에 녹여보고 싶었습니다.  
+단순 API 호출 수준이 아니라, **DB 데이터를 벡터 인덱싱하고 SSE로 스트리밍 응답**을 받는 흐름을 Spring WebFlux와 함께 직접 연결해봤습니다.  
+멀티 테넌트 격리, RBAC 권한 체계는 LMS 도메인을 빌려 함께 실습했습니다.
 
 ---
 
@@ -11,50 +19,101 @@
 | Language | Java 17 |
 | Framework | Spring Boot 3.2, Spring Security 6 |
 | Persistence | MyBatis 3, PostgreSQL |
+| Reactive | Spring WebFlux (WebClient, SSE) |
 | Auth | JWT (jjwt 0.12) |
 | Build | Gradle |
 
 ---
 
-## 핵심 구현 포인트
+## 핵심 구현 — RAG 챗봇
 
-### 1. 멀티 테넌트 데이터 격리 — `TenantInterceptor`
+### 전체 흐름
+
+```
+클라이언트
+  └─ POST /api/chatbot/stream (질문 + 대화 히스토리)
+        └─ ChatbotService
+              └─ WebClient → RAG 서버 /chat/stream
+                    └─ SSE 토큰 스트리밍 → 클라이언트로 실시간 전달
+```
+
+### 1. SSE 스트리밍 응답
+
+RAG 서버에서 답변을 토큰 단위로 받아 클라이언트에 실시간으로 흘려줍니다.
+
+```java
+// ChatbotService.java
+return ragWebClient.post()
+        .uri("/chat/stream")
+        .bodyValue(body)
+        .retrieve()
+        .bodyToFlux(new ParameterizedTypeReference<ServerSentEvent<String>>() {})
+        .filter(event -> event.data() != null && !event.data().equals("[DONE]"))
+        .map(ServerSentEvent::data);
+```
+
+- `WebClient`로 RAG 서버와 논블로킹 연결
+- `[DONE]` 이벤트 필터링으로 스트림 종료 처리
+- 응답 완료 시간 로깅으로 레이턴시 측정 (`doOnComplete`)
+
+### 2. DB 테이블 벡터 인덱싱
+
+강좌·진도 같은 DB 데이터를 RAG 서버에 인덱싱해 질문 컨텍스트로 활용합니다.
+
+```http
+POST /api/chatbot/index-db
+{
+  "tableName":   "courses",
+  "textColumns": ["title", "description"],
+  "idColumn":    "id"
+}
+```
+
+- 관리자가 원하는 테이블·컬럼을 지정해 벡터 임베딩 생성 요청
+- RAG 서버가 청크 분할 → 임베딩 → 벡터 DB 저장까지 처리
+
+### 3. 대화 히스토리 유지
+
+```java
+public class ChatRequest {
+    private String question;
+    @Size(max = 20)
+    private List<ChatMessage> history;  // 최대 20턴 유지
+}
+```
+
+매 요청마다 이전 대화를 함께 전송해 멀티턴 문맥을 유지합니다.
+
+---
+
+## 멀티 테넌트 데이터 격리
+
+대학 A와 대학 B가 같은 서버를 쓰되 데이터가 섞이지 않아야 하는 시나리오를 구현했습니다.
 
 ```
 요청 → JwtAuthenticationFilter
-         └─ TenantContext.setTenantId("univ_a")  // ① JWT 파싱 시 저장
-              └─ MyBatis Executor.query()
-                   └─ TenantInterceptor 가로채기  // ② SQL 실행 전 인터셉트
-                        └─ WHERE tenant_id = 'univ_a' 자동 주입  // ③ 격리 보장
+         └─ TenantContext.setTenantId("univ_a")   // JWT 파싱 시 ThreadLocal에 저장
+              └─ MyBatis SQL 실행 직전
+                   └─ TenantInterceptor 가로채기
+                        └─ WHERE tenant_id = 'univ_a' 자동 주입
 ```
 
-- `MyBatis Interceptor`가 모든 SELECT 실행 전 `tenant_id` 조건을 자동 주입
-- 개발자가 쿼리에 조건을 빠뜨려도 크로스 테넌트 접근이 구조적으로 불가능
+- 쿼리에 `tenant_id` 조건을 빠뜨려도 `TenantInterceptor`가 자동으로 주입
 - 요청 종료 시 `TenantContext.clear()`로 ThreadLocal 누수 방지
 
-### 2. Spring Security RBAC 권한 체계
+---
+
+## Spring Security RBAC
 
 ```
-Role (역할)      Permission (개별 권한)
-─────────────    ─────────────────────
-ROLE_ADMIN    →  course:read, course:write, course:delete, user:write, ...
-ROLE_INSTRUCTOR→  course:read, course:write, enrollment:read, ...
-ROLE_STUDENT  →  course:read, enrollment:read, enrollment:write, progress:write
+ROLE_ADMIN      →  course:read/write/delete, user:write, ...
+ROLE_INSTRUCTOR →  course:read/write, enrollment:read, ...
+ROLE_STUDENT    →  course:read, enrollment:read/write, progress:write
 ```
 
 - `role_permission` 매핑 테이블로 DB에서 권한 관리
-- Spring Security `hasAuthority()`로 URL 단위 선언적 제어
-- `@PreAuthorize`로 서비스 메서드 단위 2차 권한 검증
-- 새 권한 추가 시 코드 변경 없이 DB 매핑만 추가
-
-### 3. 배치 집계로 응답 성능 확보
-
-```
-매일 새벽 2시: rebuildSummaryAll()     → progress_summary 전체 재집계
-매 1시간:      upsertSummaryAfter()   → 최근 1시간 변경분 증분 갱신
-
-관리자 조회 → progress_summary 단순 SELECT → 0.3초 이하 응답
-```
+- `@PreAuthorize`로 서비스 메서드 단위 2차 검증
+- 새 권한 추가 시 DB 매핑만 추가하면 됨
 
 ---
 
@@ -62,86 +121,63 @@ ROLE_STUDENT  →  course:read, enrollment:read, enrollment:write, progress:writ
 
 ```
 src/main/java/com/learnflow/
-├── LearnFlowApplication.java
 ├── config/
-│   └── SecurityConfig.java          # Spring Security 6 설정
+│   ├── RagWebClientConfig.java      # WebClient 빈 설정 (RAG 서버 URL)
+│   └── SecurityConfig.java
 ├── domain/
-│   ├── course/                      # 강좌 도메인
-│   ├── enrollment/                  # 수강 신청 도메인
-│   ├── progress/                    # 진도·수료 도메인 + 배치
-│   └── user/                        # 사용자·인증 도메인
+│   ├── chatbot/                     # ★ RAG 챗봇
+│   │   ├── ChatbotController.java   # SSE 스트리밍 엔드포인트
+│   │   ├── ChatbotService.java      # WebClient → RAG 서버 연동
+│   │   ├── ChatRequest.java
+│   │   ├── ChatMessage.java
+│   │   └── DbIndexRequest.java      # DB 벡터 인덱싱 요청
+│   ├── course/
+│   ├── enrollment/
+│   └── progress/                    # 배치 집계 (새벽 2시 전체 / 1시간 증분)
 └── global/
     ├── interceptor/
     │   ├── TenantContext.java        # ThreadLocal 테넌트 홀더
-    │   └── TenantInterceptor.java   # ★ 핵심: MyBatis 자동 격리
-    ├── security/
-    │   ├── JwtProvider.java
-    │   ├── JwtAuthenticationFilter.java
-    │   ├── UserPrincipal.java
-    │   ├── Permission.java           # 권한 상수
-    │   └── LearnFlowUserDetailsService.java
-    ├── exception/
-    └── response/
+    │   └── TenantInterceptor.java   # MyBatis 자동 격리
+    └── security/
+        ├── JwtProvider.java
+        └── JwtAuthenticationFilter.java
 ```
 
 ---
 
 ## 실행 방법
 
-### 1. PostgreSQL 준비
-
 ```sql
+-- PostgreSQL 준비
 CREATE DATABASE learnflow;
 CREATE USER learnflow WITH PASSWORD 'learnflow';
 GRANT ALL PRIVILEGES ON DATABASE learnflow TO learnflow;
 ```
 
-### 2. 실행
-
 ```bash
 ./gradlew bootRun
 ```
 
-스키마와 초기 데이터는 자동으로 적용됩니다.
+스키마와 초기 데이터는 자동 적용됩니다. (`src/main/resources/schema.sql`, `data.sql`)
 
 ---
 
-## API 명세
+## API 요약
 
-### 인증
+### 챗봇 (RAG)
 
 ```http
-POST /api/auth/login
-{
-  "email":    "admin@hanbit.ac.kr",
-  "password": "test1234",
-  "tenantId": "univ_a"
-}
+POST /api/chatbot/stream       # SSE 스트리밍 질의응답
+POST /api/chatbot/index-db     # DB 테이블 벡터 인덱싱 (ADMIN)
 ```
 
-### 강좌
+### 강좌 / 수강 / 진도
 
 ```http
-GET    /api/courses          # 강좌 목록 (tenant 자동 필터)
-GET    /api/courses/{id}     # 강좌 상세
-POST   /api/courses          # 강좌 등록 (INSTRUCTOR, ADMIN)
-PUT    /api/courses/{id}     # 강좌 수정 (INSTRUCTOR, ADMIN)
-DELETE /api/courses/{id}     # 강좌 삭제 (ADMIN)
-```
-
-### 수강
-
-```http
-GET  /api/enrollments/my             # 내 수강 목록
-POST /api/enrollments/{courseId}     # 수강 신청
-```
-
-### 진도
-
-```http
-POST /api/progress                   # 진도 저장
-GET  /api/progress/{enrollmentId}    # 진도 조회
-GET  /api/reports/courses/{courseId}/progress  # 강좌 전체 진도 (배치 집계)
+GET|POST|PUT|DELETE /api/courses
+GET|POST            /api/enrollments
+POST|GET            /api/progress
+GET                 /api/reports/courses/{courseId}/progress
 ```
 
 ---
