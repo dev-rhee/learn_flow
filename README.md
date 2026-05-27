@@ -68,6 +68,7 @@ graph TD
  RAG(Retrieval-Augmented Generation) 구조를 조금 더 깊이 이해하고자 만들었습니다.                 
  langchain을 쓰는 대신 **DB 데이터를 벡터 인덱싱하고 SSE로 스트리밍 응답**을 받는 흐름을
  Spring WebFlux와 함께 직접 연결해봤습니다.
+ 
  멀티 테넌트 격리, RBAC 권한 체계는 LMS 도메인을 빌려 함께 실습했습니다.
 
 ---
