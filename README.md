@@ -65,9 +65,10 @@ graph TD
 
 ## 왜 만들었나
 
-RAG(Retrieval-Augmented Generation) 구조를 실제 서비스 흐름에 녹여보고 싶었습니다.  
-단순 API 호출 수준이 아니라, **DB 데이터를 벡터 인덱싱하고 SSE로 스트리밍 응답**을 받는 흐름을 Spring WebFlux와 함께 직접 연결해봤습니다.  
-멀티 테넌트 격리, RBAC 권한 체계는 LMS 도메인을 빌려 함께 실습했습니다.
+ RAG(Retrieval-Augmented Generation) 구조를 조금 더 깊이 이해하고자 만들었습니다.                 
+ langchain을 쓰는 대신 **DB 데이터를 벡터 인덱싱하고 SSE로 스트리밍 응답**을 받는 흐름을
+ Spring WebFlux와 함께 직접 연결해봤습니다.
+ 멀티 테넌트 격리, RBAC 권한 체계는 LMS 도메인을 빌려 함께 실습했습니다.
 
 ---
 
@@ -191,67 +192,9 @@ rag-server/
 │   ├── chat_router.py           # POST /chat/stream  — SSE 스트리밍
 │   └── document_router.py      # POST /documents/index-db  — 벡터 인덱싱
 └── services/
-    ├── rag_service.py           # ★ RAG 핵심: 검색 → 프롬프트 조립 → Groq 스트리밍
+    ├── rag_service.py           # RAG 핵심: 검색 → 프롬프트 조립 → Groq 스트리밍
     ├── vector_store_service.py  # ChromaDB 벡터 저장/검색
     ├── embedding_service.py     # 로컬 sentence-transformers 임베딩
     └── document_service.py      # PDF·DB 데이터 청크 분할 및 인덱싱
 ```
 
----
-
-## 실행 방법
-
-```sql
--- PostgreSQL 준비
-CREATE DATABASE learnflow;
-CREATE USER learnflow WITH PASSWORD 'learnflow';
-GRANT ALL PRIVILEGES ON DATABASE learnflow TO learnflow;
-```
-
-**Spring Boot**
-
-```bash
-./gradlew bootRun
-```
-
-스키마와 초기 데이터는 자동 적용됩니다. (`src/main/resources/schema.sql`, `data.sql`)
-
-**RAG 서버**
-
-```bash
-cd rag-server
-cp .env.example .env   # GROQ_API_KEY 입력
-pip install -r requirements.txt
-python main.py         # http://localhost:8001
-```
-
----
-
-## API 요약
-
-### 챗봇 (RAG)
-
-```http
-POST /api/chatbot/stream       # SSE 스트리밍 질의응답
-POST /api/chatbot/index-db     # DB 테이블 벡터 인덱싱 (ADMIN)
-```
-
-### 강좌 / 수강 / 진도
-
-```http
-GET|POST|PUT|DELETE /api/courses
-GET|POST            /api/enrollments
-POST|GET            /api/progress
-GET                 /api/reports/courses/{courseId}/progress
-```
-
----
-
-## 테스트 계정
-
-| 역할 | 이메일 | 비밀번호 | 테넌트 |
-|---|---|---|---|
-| 관리자 | admin@hanbit.ac.kr | test1234 | univ_a |
-| 교수 | prof.kim@hanbit.ac.kr | test1234 | univ_a |
-| 학생 | student1@hanbit.ac.kr | test1234 | univ_a |
-| 관리자 | admin@mirae.ac.kr | test1234 | univ_b |
