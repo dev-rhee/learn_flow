@@ -83,7 +83,7 @@ graph TD
 | Reactive | Spring WebFlux (WebClient, SSE) |
 | Auth | JWT (jjwt 0.12) |
 | Build | Gradle |
-
+| Infra | Docker |
 ---
 
 ## 핵심 구현 — RAG 챗봇
